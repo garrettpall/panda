@@ -38,6 +38,8 @@ const CanMsg GM_CAM_TX_MSGS[] = {{0x180, 0, 4},  // pt bus
 const CanMsg GM_CAM_LONG_TX_MSGS[] = {{0x180, 0, 4}, {0x315, 0, 5}, {0x2CB, 0, 8}, {0x370, 0, 6},  // pt bus
                                       {0x184, 2, 8}};  // camera bus
 
+const CanMsg GM_SC_TX_MSGS[] = {{0x152, 0, 8}, {0x154, 0, 8}};  // pt bus
+
 // TODO: do checksum and counter checks. Add correct timestep, 0.1s for now.
 RxCheck gm_rx_checks[] = {
   {.msg = {{0x184, 0, 8, .frequency = 10U}, { 0 }, { 0 }}},
@@ -52,6 +54,7 @@ RxCheck gm_rx_checks[] = {
 
 const uint16_t GM_PARAM_HW_CAM = 1;
 const uint16_t GM_PARAM_HW_CAM_LONG = 2;
+const uint16_t GM_PARAM_HW_SC = 4;
 
 enum {
   GM_BTN_UNPRESS = 1,
@@ -60,7 +63,7 @@ enum {
   GM_BTN_CANCEL = 6,
 };
 
-enum {GM_ASCM, GM_CAM} gm_hw = GM_ASCM;
+enum {GM_ASCM, GM_CAM, GM_SC} gm_hw = GM_ASCM;
 bool gm_cam_long = false;
 bool gm_pcm_cruise = false;
 
@@ -210,16 +213,35 @@ static int gm_fwd_hook(int bus_num, int addr) {
       }
     }
   }
+  if (gm_hw == GM_SC) {
+    if (bus_num == 0) {
+      bus_fwd = 2;
+    }
+
+    if (bus_num == 2) {
+      bool is_lkas_msg = (addr == 0x152) || (addr == 0x154);
+      int block_msg = is_lkas_msg;
+      if (!block_msg) {
+        bus_fwd = 0;
+      }
+    }
+  }
 
   return bus_fwd;
 }
 
 static safety_config gm_init(uint16_t param) {
-  gm_hw = GET_FLAG(param, GM_PARAM_HW_CAM) ? GM_CAM : GM_ASCM;
+  if GET_FLAG(param, GM_PARAM_HW_CAM) {
+    gm_hw = GM_CAM;
+  } else if GET_FLAG(param, GM_PARAM_HW_SC) {
+    gm_hw = GM_SC;
+  } else {
+    gm_hw = GM_ASCM;
+  }
 
   if (gm_hw == GM_ASCM) {
     gm_long_limits = &GM_ASCM_LONG_LIMITS;
-  } else if (gm_hw == GM_CAM) {
+  } else if ((gm_hw == GM_CAM) || (gm_hw == GM_SC)) {
     gm_long_limits = &GM_CAM_LONG_LIMITS;
   } else {
   }
@@ -227,7 +249,7 @@ static safety_config gm_init(uint16_t param) {
 #ifdef ALLOW_DEBUG
   gm_cam_long = GET_FLAG(param, GM_PARAM_HW_CAM_LONG);
 #endif
-  gm_pcm_cruise = (gm_hw == GM_CAM) && !gm_cam_long;
+  gm_pcm_cruise = ((gm_hw == GM_CAM) && !gm_cam_long) || (gm_hw == GM_SC);
 
   safety_config ret = BUILD_SAFETY_CFG(gm_rx_checks, GM_ASCM_TX_MSGS);
   if (gm_hw == GM_CAM) {
